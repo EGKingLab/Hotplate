@@ -1,6 +1,6 @@
 ########################################################################
 target_Hz = 1
-recording_minutes = 10
+recording_minutes = 2
 iso = 200
 countdown = 5
 ########################################################################
@@ -35,9 +35,10 @@ def timestamp():
         str(t.hour) + "," + str(t.minute) + "," + str(t.second) + "," + \
         str(t.microsecond)
 
-samples = int(target_Hz * 60.0 * minutes)
+samples = int(target_Hz * 60.0 * recording_minutes)
 
 print('Recording with a target of {} Hz for {} minutes.\n'.format(target_Hz, recording_minutes))
+
 
 # Directory for holding temporary images
 temp_dir = tempfile.gettempdir() + '/' + datetime.now().isoformat()
@@ -90,12 +91,14 @@ f.write(timestamp() + ",0,0,0\n")
 
 start_time = datetime.now()
 
+ii = 1
+
 while (datetime.now() <= start_time + timedelta(minutes=recording_minutes)):
     now = datetime.now()
     
     # Record an image to the temporary directory
     #camera.annotate_text = now.isoformat()
-    camera.capture(temp_dir + '/img' + str(ii).zfill(4) + '.png')
+    camera.capture(temp_dir + '/img' + str(ii).zfill(4) + '.jpg')
     
     # Read analog in
     chan0 = AnalogIn(mcp, MCP.P0)
@@ -104,10 +107,9 @@ while (datetime.now() <= start_time + timedelta(minutes=recording_minutes)):
     # Read thermocouple
     max31855 = adafruit_max31855.MAX31855(spi, cs5)
 
-    print('Samples to go: {}\tTherm. Temp: {} C\tAnalog Temp.: {}\t{}'.format(samples - ii,
-                                                                       max31855.temperature,
-                                                                       analog_temp,
-                                                                       now.strftime('%Y-%m-%d %H:%M:%S.%f')))
+    print('Thermistor Temp.: {} C\tAnalog Temp.: {}\t{}'.format(max31855.temperature,
+                                                                analog_temp,
+                                                                now.strftime('%Y-%m-%d %H:%M:%S.%f')))
     tc = adafruit_max31855.MAX31855(spi, cs5)
 
     f.write(timestamp() + "," + str(tc.temperature) + "," + \
@@ -116,13 +118,15 @@ while (datetime.now() <= start_time + timedelta(minutes=recording_minutes)):
     # Fix sleep time
     d = datetime.now() - now # time for the loop so far
     obs_Hz = 1 / d.total_seconds()
-    print('Obs. recording frequency: {:3f}\n'.format(obs_Hz))
+    print('Observed recording frequency: {:3f}\n'.format(obs_Hz))
 #     d_Hz = target_Hz - obs_Hz
 #     Hz = target_Hz + d_Hz
 #     print('New frequency: {:3f}'.format(Hz))
 #     sleep_time = 1 / Hz
 #     time.sleep(sleep_time)
 
+    ii = ii + 1
+    
 f.close()
 
 print("\nRecording complete. Processing video.")
@@ -141,7 +145,7 @@ tvecs = pickle.load(F)
 F.close()
 
 # Load image list
-images = glob.glob(temp_dir + '/img*.png')
+images = glob.glob(temp_dir + '/img*.jpg')
 images.sort()
 
 # Undistort
@@ -156,7 +160,7 @@ for f in images:
 
 # Write movie
 print('Writing movie.')
-os.system('ffmpeg -framerate 1 -i ' + temp_dir + '/img%04d.png outfile.avi >/dev/null 2>&1')
+os.system('ffmpeg -framerate 1 -i ' + temp_dir + '/img%04d.jpg outfile.avi >/dev/null 2>&1')
 os.rename('outfile.avi', outfile + '.avi')
 
 # Cleanup
@@ -168,3 +172,4 @@ for f in images:
 os.rmdir(temp_dir)
 
 print('\nRecording complete. Files saved as ' + outfile +'[.csv, .avi]')
+
