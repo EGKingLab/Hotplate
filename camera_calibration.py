@@ -9,7 +9,7 @@ import glob
 import pickle
 from datetime import datetime
 
-# Campture images
+# Capture images
 camera = PiCamera()
 camera.resolution = (1024, 768)
 
@@ -76,9 +76,10 @@ pickle.dump(tvecs, F)
 F.close()
 
 # Undistort an image
-img = cv.imread('calibrate_image0.jpg')
+img = cv.imread('calibrate_image14.jpg')
 h,  w = img.shape[:2]
 newcameramtx, roi = cv.getOptimalNewCameraMatrix(mtx, dist, (w,h), 1, (w,h))
 
 dst = cv.undistort(img, mtx, dist, None, newcameramtx)
-cv.imwrite('calibrate_image0_calibresult.png', dst)
+cv.imwrite('calibrate_image14_calibresult.png', dst)
+
