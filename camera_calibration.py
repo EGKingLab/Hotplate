@@ -66,7 +66,7 @@ for i in range(len(objpoints)):
 print("Total error: {:3f}".format(mean_error/len(objpoints)))
 
 # Save calibration
-cal_file = datetime.now().isoformat() + ".pkl"
+cal_file = f"{datetime.now():%Y-%m-%d_%H-%M-%S}" + ".pkl"
 F = open(cal_file, 'wb')
 pickle.dump(ret, F)
 pickle.dump(mtx, F)
