@@ -87,7 +87,6 @@ for i in range(countdown, 0, -1):
 GPIO.output(16,GPIO.LOW)
 
 print("Recording begins.")
-f.write(timestamp() + ",0,0,0\n")
 
 start_time = datetime.now()
 
