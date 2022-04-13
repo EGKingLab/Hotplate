@@ -1,3 +1,10 @@
+# For testing
+# Replace libraries by fake ones
+import sys
+import fake_rpi
+
+sys.modules['picamera'] = fake_rpi.picamera     # Fake picamera
+
 from time import sleep
 from picamera import PiCamera
 import pickle
