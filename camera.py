@@ -26,7 +26,7 @@ rvecs = pickle.load(F)
 tvecs = pickle.load(F)
 F.close()
 
-# Undstort foo
+# Undistort foo
 img = cv.imread('foo.jpg')
 h,  w = img.shape[:2]
 newcameramtx, roi = cv.getOptimalNewCameraMatrix(mtx, dist, (w,h), 1, (w,h))
