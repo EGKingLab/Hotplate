@@ -1,0 +1,24 @@
+{
+	"folders": [
+		{
+			"path": "."
+		}
+	],
+	"settings": {
+		"cSpell.words": [
+			"adafruit",
+			"busio",
+			"digitalio",
+			"imread",
+			"imwrite",
+			"MOSI",
+			"newcameramtx",
+			"picamera",
+			"rvecs",
+			"setwarnings",
+			"strerror",
+			"tvecs",
+			"Undistort"
+		]
+	}
+}
