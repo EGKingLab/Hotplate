@@ -1,7 +1,7 @@
 ########################################################################
 target_Hz = 1
 recording_minutes = 10
-iso = 200
+iso = 400
 countdown = 5
 ########################################################################
 
@@ -65,7 +65,7 @@ time.sleep(2)
 
 # Get current exposure time and AWB gains to lock them
 metadata = camera.capture_metadata()
-current_exposure = metadata.get("ExposureTime", 33000)  # Default fallback
+current_exposure = metadata.get("ExposureTime", 50000)  # Default fallback (increased for more light)
 current_awb_gains = metadata.get("AwbGains", (1.0, 1.0))  # Default fallback
 
 # Now lock the exposure and AWB values
