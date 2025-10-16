@@ -2,7 +2,7 @@
 # https://docs.opencv.org/master/dc/dbb/tutorial_py_calibration.html
 
 from time import sleep
-from picamera import PiCamera
+from picamera2 import Picamera2
 import numpy as np
 import cv2 as cv
 import glob
@@ -10,20 +10,22 @@ import pickle
 from datetime import datetime
 
 # Capture images
-camera = PiCamera()
-camera.resolution = (1024, 768)
+camera = Picamera2()
+config = camera.create_still_configuration(main={"size": (1024, 768)})
+camera.configure(config)
 
 n_images = 15
 wait_time = 4
 
 print("Taking " + str(n_images) + " calibration images.")
 
+camera.start()
 for ii in range(n_images):
-    camera.start_preview()
     sleep(wait_time)
-    camera.capture('calibrate_image' + str(ii) + '.jpg')
+    camera.capture_file('calibrate_image' + str(ii) + '.jpg')
 
-camera.stop_preview()
+camera.stop()
+camera.close()
 
 # Find corners
 nrow = 13
@@ -32,8 +34,8 @@ ncol = 19
 criteria = (cv.TERM_CRITERIA_EPS + cv.TERM_CRITERIA_MAX_ITER, 30, 0.001)
 objp = np.zeros((nrow*ncol,3), np.float32)
 objp[:,:2] = np.mgrid[0:ncol,0:nrow].T.reshape(-1,2)
-objpoints = [] 
-imgpoints = [] 
+objpoints = []
+imgpoints = []
 images = glob.glob('calibrate_image*.jpg')
 
 print("Found {} images".format(len(images)))
@@ -42,14 +44,14 @@ print("Computing camera parameters")
 for fname in images:
     img = cv.imread(fname)
     gray = cv.cvtColor(img, cv.COLOR_BGR2GRAY)
-    
+
     ret, corners = cv.findChessboardCorners(gray, (ncol,nrow), None)
-    
+
     if ret == True:
         objpoints.append(objp)
         corners2 = cv.cornerSubPix(gray,corners, (11,11), (-1,-1), criteria)
         imgpoints.append(corners)
-        
+
         cv.drawChessboardCorners(img, (ncol,nrow), corners2, ret)
         cv.imshow('img', img)
         cv.waitKey(1000)
@@ -82,4 +84,3 @@ newcameramtx, roi = cv.getOptimalNewCameraMatrix(mtx, dist, (w,h), 1, (w,h))
 
 dst = cv.undistort(img, mtx, dist, None, newcameramtx)
 cv.imwrite('calibrate_image14_calibresult.png', dst)
-
