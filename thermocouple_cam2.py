@@ -156,7 +156,8 @@ print("\nRecording complete. Processing video.")
 # Load calibration
 print('\nChoose the calibration .pkl file.')
 Tk().withdraw()
-cal_file = askopenfilename()
+cal_file = askopenfilename(filetypes=[("Pickle files", "*.pkl"),
+                                      ("All files", "*.*")])
 
 F = open(cal_file, 'rb')
 ret = pickle.load(F)
