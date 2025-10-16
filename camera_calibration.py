@@ -19,11 +19,14 @@ wait_time = 4
 
 print("Taking " + str(n_images) + " calibration images.")
 
+camera.start_preview()
 camera.start()
 for ii in range(n_images):
     sleep(wait_time)
     camera.capture_file('calibrate_image' + str(ii) + '.jpg')
+    print(f"Captured image {ii + 1}/{n_images}")
 
+camera.stop_preview()
 camera.stop()
 camera.close()
 
