@@ -5,6 +5,8 @@ iso = 200
 countdown = 5
 ########################################################################
 
+# https://forums.raspberrypi.com/viewtopic.php?t=367558
+
 import time
 from datetime import datetime
 from datetime import timedelta
@@ -37,7 +39,8 @@ def timestamp():
 
 samples = int(target_Hz * 60.0 * recording_minutes)
 
-print(f'Recording with a target of {target_Hz} Hz for {recording_minutes} minutes.\n')
+print(f'Recording with a target of {target_Hz} Hz '
+      f'for {recording_minutes} minutes.\n')
 
 # Directory for holding temporary images
 temp_dir = tempfile.gettempdir() + '/' + datetime.now().isoformat()
@@ -123,7 +126,9 @@ while (datetime.now() <= start_time + timedelta(minutes=recording_minutes)):
     # Read thermocouple
     max31855 = adafruit_max31855.MAX31855(spi, cs5)
 
-    print(f'Thermistor Temp.: {max31855.temperature} C\tAnalog Temp.: {analog_temp}\t{now.strftime("%Y-%m-%d %H:%M:%S.%f")}')
+    print(f'Thermistor Temp.: {max31855.temperature} C\t'
+          f'Analog Temp.: {analog_temp}\t'
+          f'{now.strftime("%Y-%m-%d %H:%M:%S.%f")}')
     tc = adafruit_max31855.MAX31855(spi, cs5)
 
     f.write(timestamp() + "," + str(tc.temperature) + "," + \
@@ -177,7 +182,8 @@ for f in images:
 
 # Write movie
 print('Writing movie.')
-os.system('ffmpeg -framerate 1 -i ' + temp_dir + '/img%04d.jpg outfile.avi >/dev/null 2>&1')
+os.system('ffmpeg -framerate 1 -i ' + temp_dir +
+          '/img%04d.jpg outfile.avi >/dev/null 2>&1')
 os.rename('outfile.avi', outfile + '.avi')
 
 # Cleanup
