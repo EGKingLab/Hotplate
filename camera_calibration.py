@@ -11,7 +11,7 @@ from datetime import datetime
 
 # Capture images
 camera = Picamera2()
-config = camera.create_still_configuration(main={"size": (1024, 768)})
+config = camera.create_preview_configuration(main={"size": (1024, 768)})
 camera.configure(config)
 
 n_images = 15
@@ -19,14 +19,17 @@ wait_time = 4
 
 print("Taking " + str(n_images) + " calibration images.")
 
-camera.start_preview()
 camera.start()
 for ii in range(n_images):
-    sleep(wait_time)
+    # Show preview frame
+    frame = camera.capture_array()
+    cv.imshow('Camera Preview', frame)
+    cv.waitKey(wait_time * 1000)
+
     camera.capture_file('calibrate_image' + str(ii) + '.jpg')
     print(f"Captured image {ii + 1}/{n_images}")
 
-camera.stop_preview()
+cv.destroyAllWindows()
 camera.stop()
 camera.close()
 
