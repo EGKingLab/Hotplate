@@ -167,6 +167,8 @@ rvecs = pickle.load(F)
 tvecs = pickle.load(F)
 F.close()
 
+start = time.time()
+
 # Load image list
 images = glob.glob(temp_dir + '/img*.jpg')
 images.sort()
@@ -196,3 +198,10 @@ for f in images:
 os.rmdir(temp_dir)
 
 print('\nRecording complete. Files saved as ' + outfile +'[.csv, .avi]')
+
+end = time.time()
+elapsed_seconds = end - start
+hours = int(elapsed_seconds // 3600)
+minutes = int((elapsed_seconds % 3600) // 60)
+seconds = elapsed_seconds % 60
+print(f'Elapsed time: {hours:02d}:{minutes:02d}:{seconds:05.2f}')
