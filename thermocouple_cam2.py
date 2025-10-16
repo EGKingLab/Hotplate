@@ -55,8 +55,8 @@ camera.configure(config)
 analogue_gain = iso / 100.0
 camera.set_controls({
     "AnalogueGain": analogue_gain,
-    "AeEnable": False,  # Disable auto exposure
-    "AwbEnable": False  # Disable auto white balance
+    "AeEnable": True,  # Enable auto exposure
+    "AwbEnable": True  # Enable auto white balance
 })
 
 # Start camera and wait for settings to settle
