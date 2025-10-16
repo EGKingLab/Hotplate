@@ -134,15 +134,19 @@ while (datetime.now() <= start_time + timedelta(minutes=recording_minutes)):
     f.write(timestamp() + "," + str(tc.temperature) + "," + \
             str(tc.temperature_NIST) + "," + str(analog_temp) + "\n")
 
-    # Fix sleep time
-    d = datetime.now() - now # time for the loop so far
-    obs_Hz = 1 / d.total_seconds()
-    print('Observed recording frequency: {:3f}\n'.format(obs_Hz))
-#     d_Hz = target_Hz - obs_Hz
-#     Hz = target_Hz + d_Hz
-#     print('New frequency: {:3f}'.format(Hz))
-#     sleep_time = 1 / Hz
-#     time.sleep(sleep_time)
+    # Adaptive sleep to maintain target frequency
+    loop_duration = (datetime.now() - now).total_seconds()
+    target_period = 1.0 / target_Hz  # 1.0 seconds for 1 Hz
+    sleep_time = target_period - loop_duration
+
+    if sleep_time > 0:
+        time.sleep(sleep_time)
+        actual_Hz = target_Hz
+    else:
+        # Loop took longer than target period
+        actual_Hz = 1.0 / loop_duration
+
+    print(f'Loop duration: {loop_duration:.3f}s | Sleep: {max(0, sleep_time):.3f}s | Actual Hz: {actual_Hz:.3f}\n')
 
     ii = ii + 1
 
