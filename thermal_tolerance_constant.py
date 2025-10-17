@@ -30,15 +30,28 @@ import os
 import sys
 import signal
 import atexit
+import subprocess
 
 from picamera2 import Picamera2
 import cv2 as cv
 
+# Hardware configuration constants
+GPIO_LED_PIN = 16
+SPI_CS_MCP3008_PIN = 22  # D22
+SPI_CS_THERMOCOUPLE_PIN = 5  # D5
+
+# Data collection configuration constants
+ANALOG_CONVERSION_FACTOR = 1000.0
+CSV_FLUSH_INTERVAL = 10  # samples
+DEFAULT_EXPOSURE_TIME = 50000  # microseconds
+MAX_CONSECUTIVE_ERRORS = 10
+
+# Camera configuration constants
+CAMERA_RESOLUTION = (1024, 768)
+
 def timestamp():
-    t = datetime.now()
-    return str(t.year) + "," + str(t.month) + "," + str(t.day)  + "," + \
-        str(t.hour) + "," + str(t.minute) + "," + str(t.second) + "," + \
-        str(t.microsecond)
+    """Generate a CSV-formatted timestamp from current datetime."""
+    return datetime.now().strftime("%Y,%m,%d,%H,%M,%S,%f")
 
 # Global resources for cleanup
 camera = None
@@ -106,7 +119,7 @@ print(f'Recording with a target of {target_Hz} Hz '
       f'for {recording_minutes} minutes.\n')
 
 # Directory for holding temporary images
-temp_dir = tempfile.gettempdir() + '/' + datetime.now().isoformat()
+temp_dir = os.path.join(tempfile.gettempdir(), datetime.now().isoformat())
 try:
     os.mkdir(temp_dir)
     print(f"Created temporary directory: {temp_dir}")
@@ -117,7 +130,7 @@ except OSError as e:
 # Camera setup
 try:
     camera = Picamera2()
-    config = camera.create_still_configuration(main={"size": (1024, 768)})
+    config = camera.create_still_configuration(main={"size": CAMERA_RESOLUTION})
     camera.configure(config)
 
     # Set initial controls - ISO converted to AnalogueGain (ISO/100)
@@ -137,7 +150,7 @@ try:
     if not metadata:
         raise RuntimeError("Failed to capture camera metadata")
 
-    current_exposure = metadata.get("ExposureTime", 50000)  # Default fallback (increased for more light)
+    current_exposure = metadata.get("ExposureTime", DEFAULT_EXPOSURE_TIME)  # Default fallback
     current_awb_gains = metadata.get("AwbGains", (1.0, 1.0))  # Default fallback
 
     # Now lock the exposure and AWB values
@@ -174,7 +187,7 @@ except IOError as e:
 try:
     GPIO.setmode(GPIO.BCM)
     GPIO.setwarnings(False)
-    GPIO.setup(16, GPIO.OUT)
+    GPIO.setup(GPIO_LED_PIN, GPIO.OUT)
     gpio_initialized = True
     print("GPIO initialized")
 except Exception as e:
@@ -187,11 +200,11 @@ try:
     spi = busio.SPI(clock=board.SCK, MISO=board.MISO, MOSI=board.MOSI)
 
     # MCP3008
-    cs22 = digitalio.DigitalInOut(board.D22)
-    mcp = MCP.MCP3008(spi, cs22)
+    cs_mcp3008 = digitalio.DigitalInOut(getattr(board, f'D{SPI_CS_MCP3008_PIN}'))
+    mcp = MCP.MCP3008(spi, cs_mcp3008)
 
     # Thermocouple
-    cs5 = digitalio.DigitalInOut(board.D5)
+    cs_thermocouple = digitalio.DigitalInOut(getattr(board, f'D{SPI_CS_THERMOCOUPLE_PIN}'))
 
     print("SPI and sensors initialized")
 except Exception as e:
@@ -200,19 +213,18 @@ except Exception as e:
     sys.exit(1)
 
 # Countdown and start recording
-GPIO.output(16,GPIO.HIGH)
+GPIO.output(GPIO_LED_PIN, GPIO.HIGH)
 print("Recording in...")
 for i in range(countdown, 0, -1):
     print(i)
     time.sleep(1)
-GPIO.output(16,GPIO.LOW)
+GPIO.output(GPIO_LED_PIN, GPIO.LOW)
 
 print("Recording begins.")
 
 start_time = datetime.now()
 sample_count = 0
 error_count = 0
-FLUSH_INTERVAL = 10  # Flush CSV every 10 samples
 
 try:
     while (datetime.now() <= start_time + timedelta(minutes=recording_minutes)):
@@ -221,34 +233,33 @@ try:
         try:
             # Record an image to the temporary directory
             # Note: picamera2 doesn't have annotate_text, timestamp annotation removed
-            img_filename = temp_dir + '/img' + str(sample_count + 1).zfill(4) + '.jpg'
+            img_filename = os.path.join(temp_dir, f'img{str(sample_count + 1).zfill(4)}.jpg')
             camera.capture_file(img_filename)
 
             # Read analog in
             chan0 = AnalogIn(mcp, MCP.P0)
-            analog_temp = chan0.value / 1000.0
+            analog_temp = chan0.value / ANALOG_CONVERSION_FACTOR
 
             # Read thermocouple (only once, not twice)
-            tc = adafruit_max31855.MAX31855(spi, cs5)
+            thermocouple = adafruit_max31855.MAX31855(spi, cs_thermocouple)
 
-            print(f'Thermistor Temp.: {tc.temperature} C\t'
+            print(f'Thermistor Temp.: {thermocouple.temperature} C\t'
                   f'Analog Temp.: {analog_temp}\t'
                   f'{now.strftime("%Y-%m-%d %H:%M:%S.%f")}')
 
-            csv_file.write(timestamp() + "," + str(tc.temperature) + "," + \
-                    str(tc.temperature_NIST) + "," + str(analog_temp) + "\n")
+            csv_file.write(f"{timestamp()},{thermocouple.temperature},{thermocouple.temperature_NIST},{analog_temp}\n")
 
             sample_count += 1
 
             # Periodic flush to prevent data loss
-            if sample_count % FLUSH_INTERVAL == 0:
+            if sample_count % CSV_FLUSH_INTERVAL == 0:
                 csv_file.flush()
 
         except Exception as e:
             error_count += 1
             print(f"Warning: Error in sample {sample_count + 1}: {e}")
             # Continue recording despite errors
-            if error_count > 10:
+            if error_count > MAX_CONSECUTIVE_ERRORS:
                 print("Error: Too many consecutive errors, stopping recording")
                 break
 
@@ -309,7 +320,7 @@ else:
 start = time.time()
 
 # Load image list
-images = glob.glob(temp_dir + '/img*.jpg')
+images = glob.glob(os.path.join(temp_dir, 'img*.jpg'))
 images.sort()
 
 if not images:
@@ -345,14 +356,17 @@ else:
     print('Writing movie.')
     video_filename = outfile + '.avi'
     try:
-        ffmpeg_cmd = f'ffmpeg -framerate 1 -i {temp_dir}/img%04d.jpg {video_filename} -y'
-        result = os.system(ffmpeg_cmd + ' >/dev/null 2>&1')
+        input_pattern = os.path.join(temp_dir, 'img%04d.jpg')
+        result = subprocess.run(
+            ['ffmpeg', '-framerate', '1', '-i', input_pattern,
+             video_filename, '-y'],
+            capture_output=True,
+            text=True
+        )
 
-        if result != 0:
-            print(f"Warning: ffmpeg failed with exit code {result}")
-            # Try without output redirection to see error
-            print("Retrying without output suppression...")
-            os.system(ffmpeg_cmd)
+        if result.returncode != 0:
+            print(f"Warning: ffmpeg failed with exit code {result.returncode}")
+            print(f"Error output: {result.stderr}")
         elif os.path.exists(video_filename):
             print(f"Video created successfully: {video_filename}")
         else:
