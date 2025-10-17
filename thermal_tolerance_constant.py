@@ -1,52 +1,88 @@
-import time
-from datetime import datetime
-from datetime import timedelta
-import board
-import busio
-import digitalio
-import adafruit_max31855
+"""
+Thermal Tolerance Data Collection Script
 
-import adafruit_mcp3xxx.mcp3008 as MCP
-from adafruit_mcp3xxx.analog_in import AnalogIn
+This script records synchronized thermal and visual data from a Raspberry Pi
+equipped with temperature sensors and camera for thermal tolerance testing.
 
-import RPi.GPIO as GPIO
+Hardware Requirements:
+    - Raspberry Pi with Picamera2 support
+    - MAX31855 Thermocouple Amplifier (SPI)
+    - MCP3008 8-Channel 10-bit ADC (SPI)
+    - Pi Camera Module
+    - LED indicator (optional)
 
+Pin Connections:
+    - GPIO 16: LED indicator
+    - SPI CS Pin D5: MAX31855 Thermocouple
+    - SPI CS Pin D22: MCP3008 ADC
+    - MCP3008 Channel P0: Analog temperature sensor
+
+Features:
+    - Configurable recording duration and sample rate
+    - Synchronized image capture with temperature readings
+    - Adaptive timing to maintain target frequency
+    - Camera calibration and image undistortion
+    - Video generation from captured images
+    - Graceful error handling and resource cleanup
+
+Reference:
+    https://forums.raspberrypi.com/viewtopic.php?t=367558
+"""
+
+# Standard library imports
+import atexit
+import glob
+import os
 import pickle
+import signal
+import subprocess
+import sys
+import tempfile
+import time
+from datetime import datetime, timedelta
 from tkinter import Tk
 from tkinter.filedialog import askopenfilename
 
-import tempfile
-import glob
-import os
-import sys
-import signal
-import atexit
-import subprocess
+# Third-party hardware libraries
+import adafruit_max31855
+import adafruit_mcp3xxx.mcp3008 as MCP
+import board
+import busio
+import digitalio
+import RPi.GPIO as GPIO
+from adafruit_mcp3xxx.analog_in import AnalogIn
 
-from picamera2 import Picamera2
+# Third-party imaging libraries
 import cv2 as cv
-
-# https://forums.raspberrypi.com/viewtopic.php?t=367558
+from picamera2 import Picamera2
 
 ########################################################################
-target_Hz = 1
-recording_minutes = 10
-iso = 400
-countdown = 5
+# USER CONFIGURATION
+########################################################################
+target_Hz = 1                # Sampling frequency (Hz)
+recording_minutes = 10       # Recording duration (minutes)
+iso = 400                    # Camera ISO setting
+countdown = 5                # Countdown before recording starts (seconds)
 
-# Hardware configuration constants
-GPIO_LED_PIN = 16
-SPI_CS_MCP3008_PIN = 22  # D22
-SPI_CS_THERMOCOUPLE_PIN = 5  # D5
+########################################################################
+# HARDWARE CONFIGURATION CONSTANTS
+########################################################################
+GPIO_LED_PIN = 16                    # LED indicator pin
+SPI_CS_MCP3008_PIN = 22             # MCP3008 ADC chip select (D22)
+SPI_CS_THERMOCOUPLE_PIN = 5         # MAX31855 thermocouple chip select (D5)
 
-# Data collection configuration constants
-ANALOG_CONVERSION_FACTOR = 1000.0
-CSV_FLUSH_INTERVAL = 10  # samples
-DEFAULT_EXPOSURE_TIME = 50000  # microseconds
-MAX_CONSECUTIVE_ERRORS = 10
+########################################################################
+# DATA COLLECTION CONSTANTS
+########################################################################
+ANALOG_CONVERSION_FACTOR = 1000.0   # ADC to temperature conversion
+CSV_FLUSH_INTERVAL = 10             # Flush CSV every N samples
+DEFAULT_EXPOSURE_TIME = 50000       # Default camera exposure (microseconds)
+MAX_CONSECUTIVE_ERRORS = 10         # Stop after N consecutive errors
 
-# Camera configuration constants
-CAMERA_RESOLUTION = (1024, 768)
+########################################################################
+# CAMERA CONSTANTS
+########################################################################
+CAMERA_RESOLUTION = (1024, 768)     # Camera image resolution
 
 def timestamp():
     """Generate a CSV-formatted timestamp from current datetime."""
@@ -115,8 +151,8 @@ except ValueError as e:
     print(f"Configuration error: {e}")
     sys.exit(1)
 
-print(f'Recording with a target of {target_Hz} Hz '
-      f'for {recording_minutes} minutes.\n')
+print(f"Recording with a target of {target_Hz} Hz "
+      f"for {recording_minutes} minutes.\n")
 
 # Directory for holding temporary images
 temp_dir = os.path.join(tempfile.gettempdir(), datetime.now().isoformat())
@@ -175,10 +211,10 @@ outfile = datetime.now().isoformat()
 csv_filename = outfile + ".csv"
 
 try:
-    csv_file = open(csv_filename, "w")
+    csv_file = open(csv_filename, "w", encoding="utf-8")
     # Write header
     csv_file.write("Year,Month,Day,Hour,Minute,Second,Microsecond,")
-    csv_file.write("Thermistor_Temp,Thermistor_Temp_NIST,Analog\n")
+    csv_file.write("Thermocouple_Temp,Thermocouple_Temp_NIST,Analog\n")
     print(f"CSV file created: {csv_filename}")
 except IOError as e:
     print(f"Error: Failed to create CSV file "
@@ -212,6 +248,9 @@ try:
         getattr(board, f'D{SPI_CS_THERMOCOUPLE_PIN}'))
     thermocouple = adafruit_max31855.MAX31855(spi, cs_thermocouple)
 
+    # Analog input channel
+    chan0 = AnalogIn(mcp, MCP.P0)
+
     print("SPI and sensors initialized")
 except Exception as e:
     print(f"Error: Failed to initialize SPI/sensors: {e}")
@@ -240,17 +279,16 @@ try:
             # Record an image to the temporary directory
             # Note: picamera2 doesn't have annotate_text
             img_filename = os.path.join(
-                temp_dir, f'img{str(sample_count + 1).zfill(4)}.jpg')
+                temp_dir, f"img{(sample_count + 1):04d}.jpg")
             camera.capture_file(img_filename)
 
-            # Read analog in
-            chan0 = AnalogIn(mcp, MCP.P0)
+            # Read analog input
             analog_temp = chan0.value / ANALOG_CONVERSION_FACTOR
 
             # Read thermocouple temperature
-            print(f'Thermistor Temp.: {thermocouple.temperature} C\t'
-                  f'Analog Temp.: {analog_temp}\t'
-                  f'{now.strftime("%Y-%m-%d %H:%M:%S.%f")}')
+            print(f"Thermocouple Temp.: {thermocouple.temperature} C\t"
+                  f"Analog Temp.: {analog_temp}\t"
+                  f"{now.strftime('%Y-%m-%d %H:%M:%S.%f')}")
 
             csv_file.write(f"{timestamp()},{thermocouple.temperature},"
                            f"{thermocouple.temperature_NIST},"
@@ -274,7 +312,7 @@ try:
 
         # Adaptive sleep to maintain target frequency
         loop_duration = (datetime.now() - now).total_seconds()
-        target_period = 1.0 / target_Hz  # 1.0 seconds for 1 Hz
+        target_period = 1.0 / target_Hz
         sleep_time = target_period - loop_duration
 
         if sleep_time > 0:
@@ -284,9 +322,9 @@ try:
             # Loop took longer than target period
             actual_Hz = 1.0 / loop_duration
 
-        print(f'Loop duration: {loop_duration:.3f}s | '
-              f'Sleep: {max(0, sleep_time):.3f}s | '
-              f'Actual Hz: {actual_Hz:.3f}\n')
+        print(f"Loop duration: {loop_duration:.3f}s | "
+              f"Sleep: {max(0, sleep_time):.3f}s | "
+              f"Actual Hz: {actual_Hz:.3f}\n")
 
 finally:
     # Ensure resources are cleaned up
@@ -302,7 +340,7 @@ finally:
 print("\nRecording complete. Processing video.")
 
 # Load calibration
-print('\nChoose the calibration .pkl file.')
+print("\nChoose the calibration .pkl file.")
 Tk().withdraw()
 cal_file = askopenfilename(filetypes=[("Pickle files", "*.pkl"),
                                       ("All files", "*.*")])
@@ -330,10 +368,11 @@ else:
         print("Skipping image undistortion.")
         skip_undistortion = True
 
+# Start timing post-processing (after user interaction)
 start = time.time()
 
 # Load image list
-images = glob.glob(os.path.join(temp_dir, 'img*.jpg'))
+images = glob.glob(os.path.join(temp_dir, "img*.jpg"))
 images.sort()
 
 if not images:
@@ -344,7 +383,7 @@ else:
 
     # Undistort
     if not skip_undistortion:
-        print('Undistorting images.')
+        print("Undistorting images.")
         undistort_errors = 0
         for img_path in images:
             try:
@@ -353,7 +392,7 @@ else:
                     raise ValueError(f"Failed to read image: {img_path}")
 
                 h, w = img.shape[:2]
-                newcameramtx, roi = cv.getOptimalNewCameraMatrix(
+                newcameramtx, _ = cv.getOptimalNewCameraMatrix(
                     mtx, dist, (w, h), 1, (w, h))
 
                 dst = cv.undistort(img, mtx, dist, None, newcameramtx)
@@ -369,10 +408,10 @@ else:
             print(f"Warning: {undistort_errors} images failed to undistort")
 
     # Write movie
-    print('Writing movie.')
-    video_filename = outfile + '.avi'
+    print("Writing movie.")
+    video_filename = outfile + ".avi"
     try:
-        input_pattern = os.path.join(temp_dir, 'img%04d.jpg')
+        input_pattern = os.path.join(temp_dir, "img%04d.jpg")
         result = subprocess.run(
             ['ffmpeg', '-framerate', '1', '-i', input_pattern,
              video_filename, '-y'],
@@ -415,14 +454,14 @@ except OSError as e:
           f"'{temp_dir}': {e.strerror}")
 
 # Final summary
-print(f'\nRecording complete. Files saved as {outfile}[.csv, .avi]')
-print(f'Samples collected: {sample_count}')
+print(f"\nRecording complete. Files saved as {outfile}[.csv, .avi]")
+print(f"Samples collected: {sample_count}")
 if consecutive_errors > 0:
-    print(f'Consecutive errors at end: {consecutive_errors}')
+    print(f"Consecutive errors at end: {consecutive_errors}")
 
 end = time.time()
 elapsed_seconds = end - start
 hours = int(elapsed_seconds // 3600)
 minutes = int((elapsed_seconds % 3600) // 60)
 seconds = elapsed_seconds % 60
-print(f'Post-processing time: {hours:02d}:{minutes:02d}:{seconds:05.2f}')
+print(f"Post-processing time: {hours:02d}:{minutes:02d}:{seconds:05.2f}")
