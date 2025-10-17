@@ -1,12 +1,3 @@
-########################################################################
-target_Hz = 1
-recording_minutes = 10
-iso = 400
-countdown = 5
-########################################################################
-
-# https://forums.raspberrypi.com/viewtopic.php?t=367558
-
 import time
 from datetime import datetime
 from datetime import timedelta
@@ -34,6 +25,14 @@ import subprocess
 
 from picamera2 import Picamera2
 import cv2 as cv
+
+# https://forums.raspberrypi.com/viewtopic.php?t=367558
+
+########################################################################
+target_Hz = 1
+recording_minutes = 10
+iso = 400
+countdown = 5
 
 # Hardware configuration constants
 GPIO_LED_PIN = 16
@@ -116,8 +115,6 @@ except ValueError as e:
     print(f"Configuration error: {e}")
     sys.exit(1)
 
-samples = int(target_Hz * 60.0 * recording_minutes)
-
 print(f'Recording with a target of {target_Hz} Hz '
       f'for {recording_minutes} minutes.\n')
 
@@ -156,7 +153,6 @@ try:
 
     # Default fallback
     current_exposure = metadata.get("ExposureTime", DEFAULT_EXPOSURE_TIME)
-    current_awb_gains = metadata.get("AwbGains", (1.0, 1.0))  # Default fallback
 
     # Now lock the exposure and AWB values
     camera.set_controls({
@@ -234,12 +230,11 @@ print("Recording begins.")
 
 start_time = datetime.now()
 sample_count = 0
-error_count = 0
+consecutive_errors = 0
 
 try:
     end_time = start_time + timedelta(minutes=recording_minutes)
-    while datetime.now() <= end_time:
-        now = datetime.now()
+    while (now := datetime.now()) <= end_time:
 
         try:
             # Record an image to the temporary directory
@@ -262,16 +257,17 @@ try:
                            f"{analog_temp}\n")
 
             sample_count += 1
+            consecutive_errors = 0  # Reset on successful sample
 
             # Periodic flush to prevent data loss
             if sample_count % CSV_FLUSH_INTERVAL == 0:
                 csv_file.flush()
 
         except Exception as e:
-            error_count += 1
+            consecutive_errors += 1
             print(f"Warning: Error in sample {sample_count + 1}: {e}")
             # Continue recording despite errors
-            if error_count > MAX_CONSECUTIVE_ERRORS:
+            if consecutive_errors > MAX_CONSECUTIVE_ERRORS:
                 print("Error: Too many consecutive errors, "
                       "stopping recording")
                 break
@@ -295,7 +291,7 @@ try:
 finally:
     # Ensure resources are cleaned up
     print(f"\nRecording stopped. Collected {sample_count} samples "
-          f"with {error_count} errors.")
+          f"with {consecutive_errors} consecutive errors.")
     if csv_file and not csv_file.closed:
         csv_file.close()
         print("CSV file closed.")
@@ -319,11 +315,11 @@ else:
     skip_undistortion = False
     try:
         with open(cal_file, 'rb') as F:
-            ret = pickle.load(F)
+            _ = pickle.load(F)  # Skip first value
             mtx = pickle.load(F)
             dist = pickle.load(F)
-            rvecs = pickle.load(F)
-            tvecs = pickle.load(F)
+            _ = pickle.load(F)  # Skip rvecs
+            _ = pickle.load(F)  # Skip tvecs
         print(f"Calibration loaded from {cal_file}")
     except (IOError, pickle.UnpicklingError, EOFError) as e:
         print(f"Error: Failed to load calibration file: {e}")
@@ -356,7 +352,7 @@ else:
                 if img is None:
                     raise ValueError(f"Failed to read image: {img_path}")
 
-                h,  w = img.shape[:2]
+                h, w = img.shape[:2]
                 newcameramtx, roi = cv.getOptimalNewCameraMatrix(
                     mtx, dist, (w, h), 1, (w, h))
 
@@ -421,8 +417,8 @@ except OSError as e:
 # Final summary
 print(f'\nRecording complete. Files saved as {outfile}[.csv, .avi]')
 print(f'Samples collected: {sample_count}')
-if error_count > 0:
-    print(f'Errors encountered: {error_count}')
+if consecutive_errors > 0:
+    print(f'Consecutive errors at end: {consecutive_errors}')
 
 end = time.time()
 elapsed_seconds = end - start
