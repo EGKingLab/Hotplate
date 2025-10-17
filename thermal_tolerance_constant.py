@@ -93,11 +93,14 @@ def signal_handler(sig, frame):
 def validate_config():
     """Validate configuration parameters"""
     if target_Hz <= 0:
-        raise ValueError(f"target_Hz must be positive, got {target_Hz}")
+        raise ValueError(f"target_Hz must be positive, "
+                         f"got {target_Hz}")
     if recording_minutes <= 0:
-        raise ValueError(f"recording_minutes must be positive, got {recording_minutes}")
+        raise ValueError(f"recording_minutes must be positive, "
+                         f"got {recording_minutes}")
     if iso < 100 or iso > 1600:
-        print(f"Warning: ISO {iso} may be outside typical range (100-1600)")
+        print(f"Warning: ISO {iso} may be outside typical range "
+              f"(100-1600)")
     if countdown < 0:
         raise ValueError(f"countdown must be non-negative, got {countdown}")
 
@@ -124,7 +127,8 @@ try:
     os.mkdir(temp_dir)
     print(f"Created temporary directory: {temp_dir}")
 except OSError as e:
-    print(f"Error: Failed to create temporary directory '{temp_dir}': {e}")
+    print(f"Error: Failed to create temporary directory "
+          f"'{temp_dir}': {e}")
     sys.exit(1)
 
 # Camera setup
@@ -150,7 +154,8 @@ try:
     if not metadata:
         raise RuntimeError("Failed to capture camera metadata")
 
-    current_exposure = metadata.get("ExposureTime", DEFAULT_EXPOSURE_TIME)  # Default fallback
+    # Default fallback
+    current_exposure = metadata.get("ExposureTime", DEFAULT_EXPOSURE_TIME)
     current_awb_gains = metadata.get("AwbGains", (1.0, 1.0))  # Default fallback
 
     # Now lock the exposure and AWB values
@@ -161,7 +166,8 @@ try:
         "AwbEnable": False
     })
 
-    print(f"Camera initialized: Exposure={current_exposure}, Gain={analogue_gain:.2f}")
+    print(f"Camera initialized: Exposure={current_exposure}, "
+          f"Gain={analogue_gain:.2f}")
 
 except Exception as e:
     print(f"Error: Failed to initialize camera: {e}")
@@ -179,7 +185,8 @@ try:
     csv_file.write("Thermistor_Temp,Thermistor_Temp_NIST,Analog\n")
     print(f"CSV file created: {csv_filename}")
 except IOError as e:
-    print(f"Error: Failed to create CSV file '{csv_filename}': {e}")
+    print(f"Error: Failed to create CSV file "
+          f"'{csv_filename}': {e}")
     cleanup_resources()
     sys.exit(1)
 
@@ -200,11 +207,13 @@ try:
     spi = busio.SPI(clock=board.SCK, MISO=board.MISO, MOSI=board.MOSI)
 
     # MCP3008
-    cs_mcp3008 = digitalio.DigitalInOut(getattr(board, f'D{SPI_CS_MCP3008_PIN}'))
+    cs_mcp3008 = digitalio.DigitalInOut(
+        getattr(board, f'D{SPI_CS_MCP3008_PIN}'))
     mcp = MCP.MCP3008(spi, cs_mcp3008)
 
     # Thermocouple
-    cs_thermocouple = digitalio.DigitalInOut(getattr(board, f'D{SPI_CS_THERMOCOUPLE_PIN}'))
+    cs_thermocouple = digitalio.DigitalInOut(
+        getattr(board, f'D{SPI_CS_THERMOCOUPLE_PIN}'))
 
     print("SPI and sensors initialized")
 except Exception as e:
@@ -227,13 +236,15 @@ sample_count = 0
 error_count = 0
 
 try:
-    while (datetime.now() <= start_time + timedelta(minutes=recording_minutes)):
+    end_time = start_time + timedelta(minutes=recording_minutes)
+    while datetime.now() <= end_time:
         now = datetime.now()
 
         try:
             # Record an image to the temporary directory
-            # Note: picamera2 doesn't have annotate_text, timestamp annotation removed
-            img_filename = os.path.join(temp_dir, f'img{str(sample_count + 1).zfill(4)}.jpg')
+            # Note: picamera2 doesn't have annotate_text
+            img_filename = os.path.join(
+                temp_dir, f'img{str(sample_count + 1).zfill(4)}.jpg')
             camera.capture_file(img_filename)
 
             # Read analog in
@@ -247,7 +258,9 @@ try:
                   f'Analog Temp.: {analog_temp}\t'
                   f'{now.strftime("%Y-%m-%d %H:%M:%S.%f")}')
 
-            csv_file.write(f"{timestamp()},{thermocouple.temperature},{thermocouple.temperature_NIST},{analog_temp}\n")
+            csv_file.write(f"{timestamp()},{thermocouple.temperature},"
+                           f"{thermocouple.temperature_NIST},"
+                           f"{analog_temp}\n")
 
             sample_count += 1
 
@@ -260,7 +273,8 @@ try:
             print(f"Warning: Error in sample {sample_count + 1}: {e}")
             # Continue recording despite errors
             if error_count > MAX_CONSECUTIVE_ERRORS:
-                print("Error: Too many consecutive errors, stopping recording")
+                print("Error: Too many consecutive errors, "
+                      "stopping recording")
                 break
 
         # Adaptive sleep to maintain target frequency
@@ -275,11 +289,14 @@ try:
             # Loop took longer than target period
             actual_Hz = 1.0 / loop_duration
 
-        print(f'Loop duration: {loop_duration:.3f}s | Sleep: {max(0, sleep_time):.3f}s | Actual Hz: {actual_Hz:.3f}\n')
+        print(f'Loop duration: {loop_duration:.3f}s | '
+              f'Sleep: {max(0, sleep_time):.3f}s | '
+              f'Actual Hz: {actual_Hz:.3f}\n')
 
 finally:
     # Ensure resources are cleaned up
-    print(f"\nRecording stopped. Collected {sample_count} samples with {error_count} errors.")
+    print(f"\nRecording stopped. Collected {sample_count} samples "
+          f"with {error_count} errors.")
     if csv_file and not csv_file.closed:
         csv_file.close()
         print("CSV file closed.")
@@ -296,7 +313,8 @@ cal_file = askopenfilename(filetypes=[("Pickle files", "*.pkl"),
                                       ("All files", "*.*")])
 
 if not cal_file:
-    print("Warning: No calibration file selected. Skipping image undistortion.")
+    print("Warning: No calibration file selected. "
+          "Skipping image undistortion.")
     skip_undistortion = True
 else:
     skip_undistortion = False
@@ -324,7 +342,8 @@ images = glob.glob(os.path.join(temp_dir, 'img*.jpg'))
 images.sort()
 
 if not images:
-    print("Warning: No images found in temporary directory. Skipping video processing.")
+    print("Warning: No images found in temporary directory. "
+          "Skipping video processing.")
 else:
     print(f"Found {len(images)} images to process.")
 
@@ -339,11 +358,13 @@ else:
                     raise ValueError(f"Failed to read image: {img_path}")
 
                 h,  w = img.shape[:2]
-                newcameramtx, roi = cv.getOptimalNewCameraMatrix(mtx, dist, (w,h), 1, (w,h))
+                newcameramtx, roi = cv.getOptimalNewCameraMatrix(
+                    mtx, dist, (w, h), 1, (w, h))
 
                 dst = cv.undistort(img, mtx, dist, None, newcameramtx)
                 if not cv.imwrite(img_path, dst):
-                    raise ValueError(f"Failed to write undistorted image: {img_path}")
+                    raise ValueError(
+                        f"Failed to write undistorted image: {img_path}")
 
             except Exception as e:
                 undistort_errors += 1
@@ -365,12 +386,14 @@ else:
         )
 
         if result.returncode != 0:
-            print(f"Warning: ffmpeg failed with exit code {result.returncode}")
+            print(f"Warning: ffmpeg failed with exit code "
+                  f"{result.returncode}")
             print(f"Error output: {result.stderr}")
         elif os.path.exists(video_filename):
             print(f"Video created successfully: {video_filename}")
         else:
-            print("Warning: ffmpeg command completed but video file not found")
+            print("Warning: ffmpeg command completed but "
+                  "video file not found")
 
     except Exception as e:
         print(f"Error: Failed to create video: {e}")
@@ -386,13 +409,15 @@ if images:
             print(f"Warning: Failed to remove {img_path}: {e.strerror}")
 
     if cleanup_errors > 0:
-        print(f"Warning: {cleanup_errors} temporary files could not be removed")
+        print(f"Warning: {cleanup_errors} temporary files "
+              f"could not be removed")
 
 try:
     os.rmdir(temp_dir)
     print(f"Temporary directory removed: {temp_dir}")
 except OSError as e:
-    print(f"Warning: Failed to remove temporary directory '{temp_dir}': {e.strerror}")
+    print(f"Warning: Failed to remove temporary directory "
+          f"'{temp_dir}': {e.strerror}")
 
 # Final summary
 print(f'\nRecording complete. Files saved as {outfile}[.csv, .avi]')
