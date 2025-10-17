@@ -13,6 +13,7 @@
         "strerror",
         "tvecs",
         "Undistort",
-        "Undistorting"
+        "Undistorting",
+        "undistortion"
     ]
 }
