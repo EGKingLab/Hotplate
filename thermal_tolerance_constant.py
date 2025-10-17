@@ -214,6 +214,7 @@ try:
     # Thermocouple
     cs_thermocouple = digitalio.DigitalInOut(
         getattr(board, f'D{SPI_CS_THERMOCOUPLE_PIN}'))
+    thermocouple = adafruit_max31855.MAX31855(spi, cs_thermocouple)
 
     print("SPI and sensors initialized")
 except Exception as e:
@@ -251,9 +252,7 @@ try:
             chan0 = AnalogIn(mcp, MCP.P0)
             analog_temp = chan0.value / ANALOG_CONVERSION_FACTOR
 
-            # Read thermocouple (only once, not twice)
-            thermocouple = adafruit_max31855.MAX31855(spi, cs_thermocouple)
-
+            # Read thermocouple temperature
             print(f'Thermistor Temp.: {thermocouple.temperature} C\t'
                   f'Analog Temp.: {analog_temp}\t'
                   f'{now.strftime("%Y-%m-%d %H:%M:%S.%f")}')
