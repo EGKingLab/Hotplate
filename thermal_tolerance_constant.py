@@ -27,6 +27,9 @@ from tkinter.filedialog import askopenfilename
 import tempfile
 import glob
 import os
+import sys
+import signal
+import atexit
 
 from picamera2 import Picamera2
 import cv2 as cv
@@ -37,6 +40,66 @@ def timestamp():
         str(t.hour) + "," + str(t.minute) + "," + str(t.second) + "," + \
         str(t.microsecond)
 
+# Global resources for cleanup
+camera = None
+csv_file = None
+temp_dir = None
+gpio_initialized = False
+
+def cleanup_resources():
+    """Cleanup all resources safely"""
+    global camera, csv_file, temp_dir, gpio_initialized
+
+    if camera is not None:
+        try:
+            camera.stop()
+            print("Camera stopped.")
+        except Exception as e:
+            print(f"Error stopping camera: {e}")
+
+    if csv_file is not None and not csv_file.closed:
+        try:
+            csv_file.close()
+            print("CSV file closed.")
+        except Exception as e:
+            print(f"Error closing CSV file: {e}")
+
+    if gpio_initialized:
+        try:
+            GPIO.cleanup()
+            print("GPIO cleaned up.")
+        except Exception as e:
+            print(f"Error cleaning up GPIO: {e}")
+
+def signal_handler(sig, frame):
+    """Handle interrupt signals gracefully"""
+    print(f"\n\nReceived signal {sig}. Cleaning up...")
+    cleanup_resources()
+    sys.exit(0)
+
+def validate_config():
+    """Validate configuration parameters"""
+    if target_Hz <= 0:
+        raise ValueError(f"target_Hz must be positive, got {target_Hz}")
+    if recording_minutes <= 0:
+        raise ValueError(f"recording_minutes must be positive, got {recording_minutes}")
+    if iso < 100 or iso > 1600:
+        print(f"Warning: ISO {iso} may be outside typical range (100-1600)")
+    if countdown < 0:
+        raise ValueError(f"countdown must be non-negative, got {countdown}")
+
+# Register cleanup handlers
+atexit.register(cleanup_resources)
+signal.signal(signal.SIGINT, signal_handler)
+signal.signal(signal.SIGTERM, signal_handler)
+
+# Validate configuration
+try:
+    validate_config()
+except ValueError as e:
+    print(f"Configuration error: {e}")
+    sys.exit(1)
+
 samples = int(target_Hz * 60.0 * recording_minutes)
 
 print(f'Recording with a target of {target_Hz} Hz '
@@ -44,59 +107,97 @@ print(f'Recording with a target of {target_Hz} Hz '
 
 # Directory for holding temporary images
 temp_dir = tempfile.gettempdir() + '/' + datetime.now().isoformat()
-os.mkdir(temp_dir)
+try:
+    os.mkdir(temp_dir)
+    print(f"Created temporary directory: {temp_dir}")
+except OSError as e:
+    print(f"Error: Failed to create temporary directory '{temp_dir}': {e}")
+    sys.exit(1)
 
 # Camera setup
-camera = Picamera2()
-config = camera.create_still_configuration(main={"size": (1024, 768)})
-camera.configure(config)
+try:
+    camera = Picamera2()
+    config = camera.create_still_configuration(main={"size": (1024, 768)})
+    camera.configure(config)
 
-# Set initial controls - ISO converted to AnalogueGain (ISO/100)
-analogue_gain = iso / 100.0
-camera.set_controls({
-    "AnalogueGain": analogue_gain,
-    "AeEnable": True,  # Enable auto exposure
-    "AwbEnable": True  # Enable auto white balance
-})
+    # Set initial controls - ISO converted to AnalogueGain (ISO/100)
+    analogue_gain = iso / 100.0
+    camera.set_controls({
+        "AnalogueGain": analogue_gain,
+        "AeEnable": True,  # Enable auto exposure
+        "AwbEnable": True  # Enable auto white balance
+    })
 
-# Start camera and wait for settings to settle
-camera.start()
-time.sleep(2)
+    # Start camera and wait for settings to settle
+    camera.start()
+    time.sleep(2)
 
-# Get current exposure time and AWB gains to lock them
-metadata = camera.capture_metadata()
-current_exposure = metadata.get("ExposureTime", 50000)  # Default fallback (increased for more light)
-current_awb_gains = metadata.get("AwbGains", (1.0, 1.0))  # Default fallback
+    # Get current exposure time and AWB gains to lock them
+    metadata = camera.capture_metadata()
+    if not metadata:
+        raise RuntimeError("Failed to capture camera metadata")
 
-# Now lock the exposure and AWB values
-camera.set_controls({
-    "ExposureTime": current_exposure,
-    "AnalogueGain": analogue_gain,
-    "AeEnable": False,
-    "AwbEnable": False
-})
+    current_exposure = metadata.get("ExposureTime", 50000)  # Default fallback (increased for more light)
+    current_awb_gains = metadata.get("AwbGains", (1.0, 1.0))  # Default fallback
+
+    # Now lock the exposure and AWB values
+    camera.set_controls({
+        "ExposureTime": current_exposure,
+        "AnalogueGain": analogue_gain,
+        "AeEnable": False,
+        "AwbEnable": False
+    })
+
+    print(f"Camera initialized: Exposure={current_exposure}, Gain={analogue_gain:.2f}")
+
+except Exception as e:
+    print(f"Error: Failed to initialize camera: {e}")
+    cleanup_resources()
+    sys.exit(1)
 
 # Open data file for writing
 outfile = datetime.now().isoformat()
-f = open(outfile + ".csv","w")
+csv_filename = outfile + ".csv"
 
-# Write header
-f.write("Year,Month,Day,Hour,Minute,Second,Microsecond,")
-f.write("Thermistor_Temp,Thermistor_Temp_NIST,Analog\n")
+try:
+    csv_file = open(csv_filename, "w")
+    # Write header
+    csv_file.write("Year,Month,Day,Hour,Minute,Second,Microsecond,")
+    csv_file.write("Thermistor_Temp,Thermistor_Temp_NIST,Analog\n")
+    print(f"CSV file created: {csv_filename}")
+except IOError as e:
+    print(f"Error: Failed to create CSV file '{csv_filename}': {e}")
+    cleanup_resources()
+    sys.exit(1)
 
 # Flash LED
-GPIO.setmode(GPIO.BCM)
-GPIO.setwarnings(False)
-GPIO.setup(16, GPIO.OUT)
+try:
+    GPIO.setmode(GPIO.BCM)
+    GPIO.setwarnings(False)
+    GPIO.setup(16, GPIO.OUT)
+    gpio_initialized = True
+    print("GPIO initialized")
+except Exception as e:
+    print(f"Error: Failed to initialize GPIO: {e}")
+    cleanup_resources()
+    sys.exit(1)
 
-spi = busio.SPI(clock=board.SCK, MISO=board.MISO, MOSI=board.MOSI)
+# Initialize SPI and sensors
+try:
+    spi = busio.SPI(clock=board.SCK, MISO=board.MISO, MOSI=board.MOSI)
 
-# MCP3008
-cs22 = digitalio.DigitalInOut(board.D22)
-mcp = MCP.MCP3008(spi, cs22)
+    # MCP3008
+    cs22 = digitalio.DigitalInOut(board.D22)
+    mcp = MCP.MCP3008(spi, cs22)
 
-# Thermocouple
-cs5 = digitalio.DigitalInOut(board.D5)
+    # Thermocouple
+    cs5 = digitalio.DigitalInOut(board.D5)
+
+    print("SPI and sensors initialized")
+except Exception as e:
+    print(f"Error: Failed to initialize SPI/sensors: {e}")
+    cleanup_resources()
+    sys.exit(1)
 
 # Countdown and start recording
 GPIO.output(16,GPIO.HIGH)
@@ -109,51 +210,71 @@ GPIO.output(16,GPIO.LOW)
 print("Recording begins.")
 
 start_time = datetime.now()
+sample_count = 0
+error_count = 0
+FLUSH_INTERVAL = 10  # Flush CSV every 10 samples
 
-ii = 1
+try:
+    while (datetime.now() <= start_time + timedelta(minutes=recording_minutes)):
+        now = datetime.now()
 
-while (datetime.now() <= start_time + timedelta(minutes=recording_minutes)):
-    now = datetime.now()
+        try:
+            # Record an image to the temporary directory
+            # Note: picamera2 doesn't have annotate_text, timestamp annotation removed
+            img_filename = temp_dir + '/img' + str(sample_count + 1).zfill(4) + '.jpg'
+            camera.capture_file(img_filename)
 
-    # Record an image to the temporary directory
-    # Note: picamera2 doesn't have annotate_text, timestamp annotation removed
-    camera.capture_file(temp_dir + '/img' + str(ii).zfill(4) + '.jpg')
+            # Read analog in
+            chan0 = AnalogIn(mcp, MCP.P0)
+            analog_temp = chan0.value / 1000.0
 
-    # Read analog in
-    chan0 = AnalogIn(mcp, MCP.P0)
-    analog_temp = chan0.value / 1000.0
+            # Read thermocouple (only once, not twice)
+            tc = adafruit_max31855.MAX31855(spi, cs5)
 
-    # Read thermocouple
-    max31855 = adafruit_max31855.MAX31855(spi, cs5)
+            print(f'Thermistor Temp.: {tc.temperature} C\t'
+                  f'Analog Temp.: {analog_temp}\t'
+                  f'{now.strftime("%Y-%m-%d %H:%M:%S.%f")}')
 
-    print(f'Thermistor Temp.: {max31855.temperature} C\t'
-          f'Analog Temp.: {analog_temp}\t'
-          f'{now.strftime("%Y-%m-%d %H:%M:%S.%f")}')
-    tc = adafruit_max31855.MAX31855(spi, cs5)
+            csv_file.write(timestamp() + "," + str(tc.temperature) + "," + \
+                    str(tc.temperature_NIST) + "," + str(analog_temp) + "\n")
 
-    f.write(timestamp() + "," + str(tc.temperature) + "," + \
-            str(tc.temperature_NIST) + "," + str(analog_temp) + "\n")
+            sample_count += 1
 
-    # Adaptive sleep to maintain target frequency
-    loop_duration = (datetime.now() - now).total_seconds()
-    target_period = 1.0 / target_Hz  # 1.0 seconds for 1 Hz
-    sleep_time = target_period - loop_duration
+            # Periodic flush to prevent data loss
+            if sample_count % FLUSH_INTERVAL == 0:
+                csv_file.flush()
 
-    if sleep_time > 0:
-        time.sleep(sleep_time)
-        actual_Hz = target_Hz
-    else:
-        # Loop took longer than target period
-        actual_Hz = 1.0 / loop_duration
+        except Exception as e:
+            error_count += 1
+            print(f"Warning: Error in sample {sample_count + 1}: {e}")
+            # Continue recording despite errors
+            if error_count > 10:
+                print("Error: Too many consecutive errors, stopping recording")
+                break
 
-    print(f'Loop duration: {loop_duration:.3f}s | Sleep: {max(0, sleep_time):.3f}s | Actual Hz: {actual_Hz:.3f}\n')
+        # Adaptive sleep to maintain target frequency
+        loop_duration = (datetime.now() - now).total_seconds()
+        target_period = 1.0 / target_Hz  # 1.0 seconds for 1 Hz
+        sleep_time = target_period - loop_duration
 
-    ii = ii + 1
+        if sleep_time > 0:
+            time.sleep(sleep_time)
+            actual_Hz = target_Hz
+        else:
+            # Loop took longer than target period
+            actual_Hz = 1.0 / loop_duration
 
-f.close()
+        print(f'Loop duration: {loop_duration:.3f}s | Sleep: {max(0, sleep_time):.3f}s | Actual Hz: {actual_Hz:.3f}\n')
 
-# Stop camera
-camera.stop()
+finally:
+    # Ensure resources are cleaned up
+    print(f"\nRecording stopped. Collected {sample_count} samples with {error_count} errors.")
+    if csv_file and not csv_file.closed:
+        csv_file.close()
+        print("CSV file closed.")
+    if camera:
+        camera.stop()
+        print("Camera stopped.")
 
 print("\nRecording complete. Processing video.")
 
@@ -163,13 +284,27 @@ Tk().withdraw()
 cal_file = askopenfilename(filetypes=[("Pickle files", "*.pkl"),
                                       ("All files", "*.*")])
 
-F = open(cal_file, 'rb')
-ret = pickle.load(F)
-mtx = pickle.load(F)
-dist = pickle.load(F)
-rvecs = pickle.load(F)
-tvecs = pickle.load(F)
-F.close()
+if not cal_file:
+    print("Warning: No calibration file selected. Skipping image undistortion.")
+    skip_undistortion = True
+else:
+    skip_undistortion = False
+    try:
+        with open(cal_file, 'rb') as F:
+            ret = pickle.load(F)
+            mtx = pickle.load(F)
+            dist = pickle.load(F)
+            rvecs = pickle.load(F)
+            tvecs = pickle.load(F)
+        print(f"Calibration loaded from {cal_file}")
+    except (IOError, pickle.UnpicklingError, EOFError) as e:
+        print(f"Error: Failed to load calibration file: {e}")
+        print("Skipping image undistortion.")
+        skip_undistortion = True
+    except Exception as e:
+        print(f"Error: Unexpected error loading calibration: {e}")
+        print("Skipping image undistortion.")
+        skip_undistortion = True
 
 start = time.time()
 
@@ -177,35 +312,83 @@ start = time.time()
 images = glob.glob(temp_dir + '/img*.jpg')
 images.sort()
 
-# Undistort
-print('Undistorting images.')
-for f in images:
-    img = cv.imread(f)
-    h,  w = img.shape[:2]
-    newcameramtx, roi = cv.getOptimalNewCameraMatrix(mtx, dist, (w,h), 1, (w,h))
+if not images:
+    print("Warning: No images found in temporary directory. Skipping video processing.")
+else:
+    print(f"Found {len(images)} images to process.")
 
-    dst = cv.undistort(img, mtx, dist, None, newcameramtx)
-    cv.imwrite(f, dst)
+    # Undistort
+    if not skip_undistortion:
+        print('Undistorting images.')
+        undistort_errors = 0
+        for img_path in images:
+            try:
+                img = cv.imread(img_path)
+                if img is None:
+                    raise ValueError(f"Failed to read image: {img_path}")
 
-# Write movie
-print('Writing movie.')
-os.system('ffmpeg -framerate 1 -i ' + temp_dir +
-          '/img%04d.jpg outfile.avi >/dev/null 2>&1')
-os.rename('outfile.avi', outfile + '.avi')
+                h,  w = img.shape[:2]
+                newcameramtx, roi = cv.getOptimalNewCameraMatrix(mtx, dist, (w,h), 1, (w,h))
+
+                dst = cv.undistort(img, mtx, dist, None, newcameramtx)
+                if not cv.imwrite(img_path, dst):
+                    raise ValueError(f"Failed to write undistorted image: {img_path}")
+
+            except Exception as e:
+                undistort_errors += 1
+                print(f"Warning: Error undistorting {img_path}: {e}")
+
+        if undistort_errors > 0:
+            print(f"Warning: {undistort_errors} images failed to undistort")
+
+    # Write movie
+    print('Writing movie.')
+    video_filename = outfile + '.avi'
+    try:
+        ffmpeg_cmd = f'ffmpeg -framerate 1 -i {temp_dir}/img%04d.jpg {video_filename} -y'
+        result = os.system(ffmpeg_cmd + ' >/dev/null 2>&1')
+
+        if result != 0:
+            print(f"Warning: ffmpeg failed with exit code {result}")
+            # Try without output redirection to see error
+            print("Retrying without output suppression...")
+            os.system(ffmpeg_cmd)
+        elif os.path.exists(video_filename):
+            print(f"Video created successfully: {video_filename}")
+        else:
+            print("Warning: ffmpeg command completed but video file not found")
+
+    except Exception as e:
+        print(f"Error: Failed to create video: {e}")
 
 # Cleanup
-for f in images:
-    try:
-        os.remove(f)
-    except OSError as e:
-        print("Error: %s : %s" % (f, e.strerror))
-os.rmdir(temp_dir)
+if images:
+    cleanup_errors = 0
+    for img_path in images:
+        try:
+            os.remove(img_path)
+        except OSError as e:
+            cleanup_errors += 1
+            print(f"Warning: Failed to remove {img_path}: {e.strerror}")
 
-print('\nRecording complete. Files saved as ' + outfile +'[.csv, .avi]')
+    if cleanup_errors > 0:
+        print(f"Warning: {cleanup_errors} temporary files could not be removed")
+
+try:
+    os.rmdir(temp_dir)
+    print(f"Temporary directory removed: {temp_dir}")
+except OSError as e:
+    print(f"Warning: Failed to remove temporary directory '{temp_dir}': {e.strerror}")
+
+# Final summary
+print(f'\nRecording complete. Files saved as {outfile}[.csv, .avi]')
+print(f'Samples collected: {sample_count}')
+if error_count > 0:
+    print(f'Errors encountered: {error_count}')
 
 end = time.time()
 elapsed_seconds = end - start
 hours = int(elapsed_seconds // 3600)
 minutes = int((elapsed_seconds % 3600) // 60)
 seconds = elapsed_seconds % 60
-print(f'Elapsed time: {hours:02d}:{minutes:02d}:{seconds:05.2f}')
+print(f'Post-processing time: {hours:02d}:{minutes:02d}:{seconds:05.2f}')
