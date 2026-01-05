@@ -409,7 +409,7 @@ else:
 
     # Write movie
     print("Writing movie.")
-    video_filename = outfile + ".avi"
+    video_filename = "./" + outfile + ".avi"
     try:
         input_pattern = os.path.join(temp_dir, "img%04d.jpg")
         result = subprocess.run(
